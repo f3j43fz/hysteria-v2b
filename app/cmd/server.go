@@ -818,7 +818,7 @@ func runServer(cmd *cobra.Command, args []string) {
 			config.Obfs.Type = responseNodeInfo.ObfsType
 			config.Obfs.Salamander.Password = responseNodeInfo.Obfs
 		}
-		if responseNodeInfo.IgBW == 1 {
+		if responseNodeInfo.IgBW == true {
 			config.IgnoreClientBandwidth = true
 		}
 
