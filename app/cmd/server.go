@@ -814,9 +814,12 @@ func runServer(cmd *cobra.Command, args []string) {
 		if responseNodeInfo.UpMbps != 0 {
 			config.Bandwidth.Up = strconv.Itoa(int(responseNodeInfo.UpMbps)) + "Mbps"
 		}
-		if responseNodeInfo.Obfs != "" && responseNodeInfo.ObfsType != "" {
-			config.Obfs.Type = responseNodeInfo.ObfsType
+		if responseNodeInfo.Obfs != "" {
+			config.Obfs.Type = "salamander"
 			config.Obfs.Salamander.Password = responseNodeInfo.Obfs
+		}
+		if responseNodeInfo.ObfsType != "" {
+			config.Obfs.Type = responseNodeInfo.ObfsType
 		}
 		if responseNodeInfo.IgBW == true {
 			config.IgnoreClientBandwidth = true
