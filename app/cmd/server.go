@@ -757,7 +757,7 @@ type ResponseNodeInfo struct {
 	DownMbps   uint   `json:"down_mbps"`
 	Obfs       string `json:"obfs"`
 	ObfsType   string `json:"obfs_type"`
-	IgBW       int    `json:"ignore_client_bandwidth"`
+	IgBW       bool   `json:"ignore_client_bandwidth"`
 	BaseConfig struct {
 		PushInterval int `json:"push_interval"`
 		PullInterval int `json:"pull_interval"`
