@@ -756,6 +756,8 @@ type ResponseNodeInfo struct {
 	UpMbps     uint   `json:"up_mbps"`
 	DownMbps   uint   `json:"down_mbps"`
 	Obfs       string `json:"obfs"`
+	ObfsType   string `json:"obfs_type"`
+	IgBW       int    `json:"ignore_client_bandwidth"`
 	BaseConfig struct {
 		PushInterval int `json:"push_interval"`
 		PullInterval int `json:"pull_interval"`
@@ -812,9 +814,12 @@ func runServer(cmd *cobra.Command, args []string) {
 		if responseNodeInfo.UpMbps != 0 {
 			config.Bandwidth.Up = strconv.Itoa(int(responseNodeInfo.UpMbps)) + "Mbps"
 		}
-		if responseNodeInfo.Obfs != "" {
-			config.Obfs.Type = "salamander"
+		if responseNodeInfo.Obfs != "" && responseNodeInfo.ObfsType != "" {
+			config.Obfs.Type = responseNodeInfo.ObfsType
 			config.Obfs.Salamander.Password = responseNodeInfo.Obfs
+		}
+		if responseNodeInfo.IgBW == 1 {
+			config.IgnoreClientBandwidth = true
 		}
 
 	}
