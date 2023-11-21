@@ -30,6 +30,10 @@ import (
 	"github.com/apernet/hysteria/extras/trafficlogger"
 )
 
+const (
+	defaultListenAddr = ":443"
+)
+
 var serverCmd = &cobra.Command{
 	Use:   "server",
 	Short: "Server mode",
@@ -151,9 +155,11 @@ type serverConfigResolver struct {
 }
 
 type serverConfigACL struct {
-	File   string   `mapstructure:"file"`
-	Inline []string `mapstructure:"inline"`
-	GeoIP  string   `mapstructure:"geoip"`
+	File              string        `mapstructure:"file"`
+	Inline            []string      `mapstructure:"inline"`
+	GeoIP             string        `mapstructure:"geoip"`
+	GeoSite           string        `mapstructure:"geosite"`
+	GeoUpdateInterval time.Duration `mapstructure:"geoUpdateInterval"`
 }
 
 type serverConfigOutboundDirect struct {
@@ -184,6 +190,7 @@ type serverConfigOutboundEntry struct {
 
 type serverConfigTrafficStats struct {
 	Listen string `mapstructure:"listen"`
+	Secret string `mapstructure:"secret"`
 }
 
 type serverConfigMasqueradeFile struct {
@@ -214,7 +221,7 @@ type serverConfigMasquerade struct {
 func (c *serverConfig) fillConn(hyConfig *server.Config) error {
 	listenAddr := c.Listen
 	if listenAddr == "" {
-		listenAddr = ":443"
+		listenAddr = defaultListenAddr
 	}
 	uAddr, err := net.ResolveUDPAddr("udp", listenAddr)
 	if err != nil {
@@ -468,21 +475,23 @@ func (c *serverConfig) fillOutboundConfig(hyConfig *server.Config) error {
 	if c.ACL.File != "" && len(c.ACL.Inline) > 0 {
 		return configError{Field: "acl", Err: errors.New("cannot set both acl.file and acl.inline")}
 	}
-	gLoader := &utils.GeoIPLoader{
-		Filename:        c.ACL.GeoIP,
-		DownloadFunc:    geoipDownloadFunc,
-		DownloadErrFunc: geoipDownloadErrFunc,
+	gLoader := &utils.GeoLoader{
+		GeoIPFilename:   c.ACL.GeoIP,
+		GeoSiteFilename: c.ACL.GeoSite,
+		UpdateInterval:  c.ACL.GeoUpdateInterval,
+		DownloadFunc:    geoDownloadFunc,
+		DownloadErrFunc: geoDownloadErrFunc,
 	}
 	if c.ACL.File != "" {
 		hasACL = true
-		acl, err := outbounds.NewACLEngineFromFile(c.ACL.File, obs, gLoader.Load)
+		acl, err := outbounds.NewACLEngineFromFile(c.ACL.File, obs, gLoader)
 		if err != nil {
 			return configError{Field: "acl.file", Err: err}
 		}
 		uOb = acl
 	} else if len(c.ACL.Inline) > 0 {
 		hasACL = true
-		acl, err := outbounds.NewACLEngineFromString(strings.Join(c.ACL.Inline, "\n"), obs, gLoader.Load)
+		acl, err := outbounds.NewACLEngineFromString(strings.Join(c.ACL.Inline, "\n"), obs, gLoader)
 		if err != nil {
 			return configError{Field: "acl.inline", Err: err}
 		}
@@ -599,12 +608,9 @@ func (c *serverConfig) fillAuthenticator(hyConfig *server.Config) error {
 		}
 		// 创建一个url.Values来存储查询参数
 		queryParams := url.Values{}
-
-		// 添加token、node_id和node_type参数
 		queryParams.Add("token", v2boardConfig.ApiKey)
 		queryParams.Add("node_id", strconv.Itoa(int(v2boardConfig.NodeID)))
 		queryParams.Add("node_type", "hysteria")
-
 		// 创建完整的URL，包括查询参数
 		url := v2boardConfig.ApiHost + "/api/v1/server/UniProxy/user?" + queryParams.Encode()
 
@@ -627,7 +633,7 @@ func (c *serverConfig) fillEventLogger(hyConfig *server.Config) error {
 
 func (c *serverConfig) fillTrafficLogger(hyConfig *server.Config) error {
 	if c.TrafficStats.Listen != "" {
-		tss := trafficlogger.NewTrafficStatsServer()
+		tss := trafficlogger.NewTrafficStatsServer(c.TrafficStats.Secret)
 		hyConfig.TrafficLogger = tss
 		// 添加定时更新用户使用流量协程
 		if c.V2board != nil && c.V2board.ApiHost != "" {
@@ -753,8 +759,8 @@ type ResponseNodeInfo struct {
 	Host       string `json:"host"`
 	ServerPort uint   `json:"server_port"`
 	ServerName string `json:"server_name"`
-	UpMbps     uint   `json:"up_mbps"`
-	DownMbps   uint   `json:"down_mbps"`
+	UpMbps     uint   `json:"down_mbps"`
+	DownMbps   uint   `json:"up_mbps"`
 	Obfs       string `json:"obfs"`
 	ObfsType   string `json:"obfs_type"`
 	IgBW       bool   `json:"ignore_client_bandwidth"`
@@ -831,22 +837,15 @@ func runServer(cmd *cobra.Command, args []string) {
 		logger.Fatal("failed to load server config", zap.Error(err))
 	}
 
-	// // 添加定时更新用户使用流量协程
-	// if config.V2board != nil && config.V2board.ApiHost != "" {
-	// 	// 创建一个url.Values来存储查询参数
-	// 	queryParams := url.Values{}
-	// 	queryParams.Add("token", config.V2board.ApiKey)
-	// 	queryParams.Add("node_id", strconv.Itoa(int(config.V2board.NodeID)))
-	// 	queryParams.Add("node_type", "hysteria")
-
-	// 	go hyConfig.TrafficLogger.PushTrafficToV2boardInterval(config.V2board.ApiHost+"/api/v1/server/UniProxy/push?"+queryParams.Encode(), time.Second*10)
-	// }
-
 	s, err := server.NewServer(hyConfig)
 	if err != nil {
 		logger.Fatal("failed to initialize server", zap.Error(err))
 	}
-	logger.Info("server up and running")
+	if config.Listen != "" {
+		logger.Info("server up and running", zap.String("listen", config.Listen))
+	} else {
+		logger.Info("server up and running", zap.String("listen", defaultListenAddr))
+	}
 
 	if !disableUpdateCheck {
 		go runCheckUpdateServer()
@@ -884,13 +883,13 @@ func runMasqTCPServer(s *masq.MasqTCPServer, httpAddr, httpsAddr string) {
 	}
 }
 
-func geoipDownloadFunc(filename, url string) {
-	logger.Info("downloading GeoIP database", zap.String("filename", filename), zap.String("url", url))
+func geoDownloadFunc(filename, url string) {
+	logger.Info("downloading database", zap.String("filename", filename), zap.String("url", url))
 }
 
-func geoipDownloadErrFunc(err error) {
+func geoDownloadErrFunc(err error) {
 	if err != nil {
-		logger.Error("failed to download GeoIP database", zap.Error(err))
+		logger.Error("failed to download database", zap.Error(err))
 	}
 }
 
